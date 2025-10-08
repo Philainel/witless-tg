@@ -5,10 +5,20 @@ import (
 	"os"
 	"log"
 	"time"
+	"database/sql"
+	"strings"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers"
+	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/message"
+	"github.com/go-redis/redis/v8"
+	_ "github.com/lib/pq"
+)
+
+var (
+	db *sql.DB
+	redisClient *redis.Client
 )
 
 func main() {
@@ -20,6 +30,63 @@ func main() {
 	if err != nil {
 		log.Fatalf("can't create bot: %s", err.Error())
 	}
+	redisClient = redis.NewClient(&redis.Options{
+		Addr: "localhost:6379",
+		Password: "",
+		DB: 0,
+	})
+	connection_string := "postgres://localhost:5432/postgres?sslmode=disable"
+	db, err = sql.Open("postgres", connection_string)
+	if err != nil {
+		log.Fatalf("failed to open psql connection: %s", err.Error())
+	}
+	defer db.Close()
+	query := `
+		CREATE TABLE IF NOT EXISTS token (
+			id BIGSERIAL PRIMARY KEY,
+			word TEXT NOT NULL UNIQUE
+		)
+	`
+	_, err = db.Exec(query)
+	if err != nil {
+		log.Fatalf("cannot create table token: %s", err.Error())
+	}
+	{
+		query = `
+			SELECT id FROM token WHERE id = 1
+		`
+		var id int64
+		err := db.QueryRow(query).Scan(&id)
+		if err == sql.ErrNoRows {
+			query = `
+				INSERT INTO token (word) VALUES (E'\x1f'), (E'\x1c')
+			`
+			_, err = db.Exec(query)
+			if err != nil {
+				log.Fatalf("can't create START and END tokens: %s", err.Error())
+			}
+		}
+		if err != nil {
+			log.Fatalf("can't ensure there's START and END tokens: %s", err.Error())
+		}
+	}
+	query = `
+		CREATE TABLE IF NOT EXISTS links (
+			token BIGINT,
+			chat BIGINT,
+			next BIGINT,
+			count INT,
+
+			FOREIGN KEY (token) REFERENCES token(id),
+			FOREIGN KEY (next) REFERENCES token(id),
+			PRIMARY KEY (token, chat, next)
+		)
+	`
+	_, err = db.Exec(query)
+	if err != nil {
+		log.Fatalf("cannot create table links: %s", err.Error())
+	}
+
 	dispatcher := ext.NewDispatcher(&ext.DispatcherOpts{
 		Error: func(b *gotgbot.Bot, ctx *ext.Context, err error) ext.DispatcherAction {
 			log.Println("an error occured while handling update:", err.Error())
@@ -29,7 +96,7 @@ func main() {
 	})
 	updater := ext.NewUpdater(dispatcher, nil)
 	dispatcher.AddHandler(handlers.NewCommand("start", start))
-	dispatcher.AddHandler(handlers.NewMessage(message.Text, message))
+	dispatcher.AddHandler(handlers.NewMessage(message.Text, messages))
 
 	err = updater.StartPolling(b, &ext.PollingOpts{
 		DropPendingUpdates: true,
@@ -63,6 +130,88 @@ func start(b *gotgbot.Bot, ctx *ext.Context) error {
 	return nil
 }
 
-func message(b *gotgbot.Bot, ctx *ext.Context) error {
-	
+func messages(b *gotgbot.Bot, ctx *ext.Context) error {
+	if ctx.EffectiveChat.Type == "private" || ctx.EffectiveChat.Type == "channel" {
+		return nil
+	}
+	log.Println(ctx.EffectiveMessage.Text)
+	err := learn(ctx.EffectiveChat.Id, ctx.EffectiveMessage.Text)
+	if err != nil {
+		log.Printf("error learning on message: %s\n", err.Error())
+	}
+	send, text, err := generate(ctx.EffectiveChat.Id)
+	if err != nil {
+		log.Printf("error generating message: %s\n", err.Error())
+	}
+	if send {
+		ctx.EffectiveChat.SendMessage(b, text, nil)
+	}
+	return nil
 }
+
+type tokenpair struct {
+	Current int64
+	Next int64
+}
+
+func learn(id int64, text string) error {
+	parts := strings.Split(text, " ")
+	tokens, err := GetTokensByWords(parts)
+	if err != nil {
+		return err
+	}
+	pairs := make([]*tokenpair, 0, len(parts) + 1)
+	pairs = append(pairs, &tokenpair{Current: 1, Next: tokens[0]})
+	for i := 0; i < len(tokens) - 1; i++ {
+		pairs = append(pairs, &tokenpair{Current: tokens[i], Next: tokens[i+1]})
+	}
+	pairs = append(pairs, &tokenpair{Current: tokens[len(tokens)-1], Next: 2})
+	for _, x := range pairs {
+		fmt.Printf("%d — %d; ", x.Current, x.Next)
+	}
+	fmt.Println();
+	SaveLinksFromTokenPairs(pairs, id);
+	return nil
+}
+
+func GetTokensByWords(words []string) ([]int64, error) {
+	query := `
+		SELECT id FROM token WHERE word = $1
+	`
+	insert := `
+		INSERT INTO token (word) VALUES ($1) RETURNING id
+	`
+	var id int64
+	result := make([]int64, 0, len(words))
+	for _, w := range words {
+		err := db.QueryRow(query, w).Scan(&id); 
+		if err == sql.ErrNoRows {
+			err = db.QueryRow(insert, w).Scan(&id);
+		}
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, id);
+	}
+	return result, nil
+}
+
+func SaveLinksFromTokenPairs(pairs []*tokenpair, id int64) {
+	query := `
+		INSERT INTO links (token, chat, next, count)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (token, chat, next) DO UPDATE SET count = links.count + 1;
+	`
+	for _, p := range pairs {
+		_, err := db.Exec(query, p.Current, id, p.Next, 1);
+		if err != nil {
+			log.Printf("linking error: %s", err.Error())
+			continue
+		}
+	}
+}
+
+func generate(id int64) (bool, string, error) {
+	return false, "", nil
+}
+
