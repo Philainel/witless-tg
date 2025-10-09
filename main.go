@@ -147,7 +147,7 @@ func messages(b *gotgbot.Bot, ctx *ext.Context) error {
 	if ctx.EffectiveChat.Type == "private" || ctx.EffectiveChat.Type == "channel" {
 		return nil
 	}
-	log.Println(ctx.EffectiveMessage.Text)
+	// log.Println(ctx.EffectiveMessage.Text)
 	if ctx.EffectiveMessage.Text[0] == '/' {
 		return nil
 	}
@@ -190,10 +190,10 @@ func learn(id int64, text string) error {
 		pairs = append(pairs, &tokenpair{Current: tokens[i], Next: tokens[i+1]})
 	}
 	pairs = append(pairs, &tokenpair{Current: tokens[len(tokens)-1], Next: 2})
-	for _, x := range pairs {
-		fmt.Printf("%d — %d; ", x.Current, x.Next)
-	}
-	fmt.Println();
+	// for _, x := range pairs {
+	// 	fmt.Printf("%d — %d; ", x.Current, x.Next)
+	// }
+	// fmt.Println();
 	SaveLinksFromTokenPairs(pairs, id);
 	return nil
 }
@@ -261,11 +261,11 @@ func generate(id int64) (string, error) {
 			}
 			nexts = append(nexts, next)
 		}
-		fmt.Printf("%d : ", current)
-		for _, n := range nexts {
-			fmt.Printf("%d (%d) ", n.Next, n.Count)
-		}
-		fmt.Printf("\n")
+		// fmt.Printf("%d : ", current)
+		// for _, n := range nexts {
+		// 	fmt.Printf("%d (%d) ", n.Next, n.Count)
+		// }
+		// fmt.Printf("\n")
 		total := 0;
 		for i := range nexts {
 			total += nexts[i].Count
@@ -286,9 +286,9 @@ func generate(id int64) (string, error) {
 		tokens = append(tokens, next)
 		current = next
 	}
-	for _, t := range tokens {
-		fmt.Printf("%d, ", t)
-	}
+	// for _, t := range tokens {
+	// 	fmt.Printf("%d, ", t)
+	// }
 	query = `
 		SELECT id, word FROM token WHERE id = ANY($1)
 	`
@@ -310,7 +310,7 @@ func generate(id int64) (string, error) {
 	for i := range tokens {
 		words[i] = tokenToWord[tokens[i]]
 	}
-	log.Println(words)
+	// log.Println(words)
 	return strings.Join(words, " "), nil
 }
 
