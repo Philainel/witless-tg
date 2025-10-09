@@ -155,7 +155,8 @@ func messages(b *gotgbot.Bot, ctx *ext.Context) error {
 	if err != nil {
 		log.Printf("error learning on message: %s\n", err.Error())
 	}
-	if rand.Float64() > 0.20 { // 84%
+	isReplyToMe := ctx.EffectiveMessage.ReplyToMessage != nil && ctx.EffectiveMessage.ReplyToMessage.From.Id == b.User.Id
+	if !isReplyToMe && rand.Float64() > 0.20 { // 84%
 		return  nil
 	}
 	// 16%
@@ -164,8 +165,12 @@ func messages(b *gotgbot.Bot, ctx *ext.Context) error {
 		log.Printf("error generating message: %s\n", err.Error())
 	}
 	log.Printf("Generated message: %s\n", text)
-	ctx.EffectiveChat.SendMessage(b, text, nil)
-	return nil
+	if isReplyToMe {
+		_, err = ctx.EffectiveMessage.Reply(b, text, nil)
+		return err
+	}
+	_, err = ctx.EffectiveChat.SendMessage(b, text, nil)
+	return err
 }
 
 type tokenpair struct {
