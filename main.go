@@ -7,13 +7,14 @@ import (
 	"time"
 	"database/sql"
 	"strings"
+	"math/rand"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/message"
 	"github.com/go-redis/redis/v8"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
 var (
@@ -96,6 +97,7 @@ func main() {
 	})
 	updater := ext.NewUpdater(dispatcher, nil)
 	dispatcher.AddHandler(handlers.NewCommand("start", start))
+	dispatcher.AddHandler(handlers.NewCommand("generate", generate_handler))
 	dispatcher.AddHandler(handlers.NewMessage(message.Text, messages))
 
 	err = updater.StartPolling(b, &ext.PollingOpts{
@@ -129,23 +131,40 @@ func start(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 	return nil
 }
-
+func generate_handler(b *gotgbot.Bot, ctx *ext.Context) error {
+	text, err := generate(ctx.EffectiveChat.Id)
+	log.Printf("Generated message: %s\n", text)
+	if err != nil {
+		return fmt.Errorf("failed to send start message: %w", err)
+	}
+	_, err = ctx.EffectiveMessage.Reply(b, text, nil)
+	if err != nil {
+		return err
+	}
+	return nil
+}
 func messages(b *gotgbot.Bot, ctx *ext.Context) error {
 	if ctx.EffectiveChat.Type == "private" || ctx.EffectiveChat.Type == "channel" {
 		return nil
 	}
 	log.Println(ctx.EffectiveMessage.Text)
+	if ctx.EffectiveMessage.Text[0] == '/' {
+		return nil
+	}
 	err := learn(ctx.EffectiveChat.Id, ctx.EffectiveMessage.Text)
 	if err != nil {
 		log.Printf("error learning on message: %s\n", err.Error())
 	}
-	send, text, err := generate(ctx.EffectiveChat.Id)
+	if rand.Float64() > 0.20 { // 84%
+		return  nil
+	}
+	// 16%
+	text, err := generate(ctx.EffectiveChat.Id)
 	if err != nil {
 		log.Printf("error generating message: %s\n", err.Error())
 	}
-	if send {
-		ctx.EffectiveChat.SendMessage(b, text, nil)
-	}
+	log.Printf("Generated message: %s\n", text)
+	ctx.EffectiveChat.SendMessage(b, text, nil)
 	return nil
 }
 
@@ -211,7 +230,82 @@ func SaveLinksFromTokenPairs(pairs []*tokenpair, id int64) {
 	}
 }
 
-func generate(id int64) (bool, string, error) {
-	return false, "", nil
+type next_count struct {
+	Next int64
+	Count int
+}
+
+func generate(id int64) (string, error) {
+	query := `
+		SELECT next, count FROM links WHERE token = $1 AND chat = $2
+	`
+	var current int64 = 1
+	tokens := make([]int64, 0, 10)
+	for {
+		rows, err := db.Query(query, current, id)
+		if err != nil {
+			return "", err
+		}
+		defer rows.Close()
+		nexts := make([]*next_count, 0, 10)
+		for rows.Next() {
+			next := &next_count{}
+			err := rows.Scan(&next.Next, &next.Count)
+			if err != nil {
+				return "", err
+			}
+			nexts = append(nexts, next)
+		}
+		fmt.Printf("%d : ", current)
+		for _, n := range nexts {
+			fmt.Printf("%d (%d) ", n.Next, n.Count)
+		}
+		fmt.Printf("\n")
+		total := 0;
+		for i := range nexts {
+			total += nexts[i].Count
+		}
+		random := rand.Intn(total)
+		sum := 0
+		var next int64 = 0
+		for i := range nexts {
+			sum += nexts[i].Count
+			if random <= sum {
+				next = nexts[i].Next
+				break
+			}
+		}
+		if next == 2 {
+			break
+		}
+		tokens = append(tokens, next)
+		current = next
+	}
+	for _, t := range tokens {
+		fmt.Printf("%d, ", t)
+	}
+	query = `
+		SELECT id, word FROM token WHERE id = ANY($1)
+	`
+	rows, err := db.Query(query, pq.Array(tokens))
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	tokenToWord := make(map[int64]string)
+	for rows.Next() {
+		var id int64
+		var word string
+		if err := rows.Scan(&id, &word); err != nil {
+			return "", err
+		}
+		tokenToWord[id]=word
+	}
+	words := make([]string, len(tokens));
+	for i := range tokens {
+		words[i] = tokenToWord[tokens[i]]
+	}
+	log.Println(words)
+	return strings.Join(words, " "), nil
 }
 
