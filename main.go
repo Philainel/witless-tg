@@ -8,6 +8,8 @@ import (
 	"database/sql"
 	"strings"
 	"math/rand"
+	"sync"
+	"strconv"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
@@ -20,6 +22,7 @@ import (
 var (
 	db *sql.DB
 	redisClient *redis.Client
+	wipes sync.Map
 )
 
 func main() {
@@ -98,6 +101,7 @@ func main() {
 	updater := ext.NewUpdater(dispatcher, nil)
 	dispatcher.AddHandler(handlers.NewCommand("start", start))
 	dispatcher.AddHandler(handlers.NewCommand("generate", generate_handler))
+	dispatcher.AddHandler(handlers.NewCommand("wipe", wipe))
 	dispatcher.AddHandler(handlers.NewMessage(message.Text, messages))
 
 	err = updater.StartPolling(b, &ext.PollingOpts{
@@ -120,7 +124,7 @@ func main() {
 func start(b *gotgbot.Bot, ctx *ext.Context) error {
 	_, err := ctx.EffectiveMessage.Reply(b, 
 		fmt.Sprintf(
-			"Hello, I'm @%s.\nI am a sample bot to demonstrate how file sending works.\n\nTry the /source command!", 
+			"Привет! Я @%s — Реинкарнация бота из VK.\n\nЯ работаю только в групповых чатах, где обучаюсь на сообщениях,  затем сам начинаю писать разные приколы.", 
 			b.User.Username,
 		), 
 		&gotgbot.SendMessageOpts{
@@ -128,6 +132,48 @@ func start(b *gotgbot.Bot, ctx *ext.Context) error {
 	})
 	if err != nil {
 		return fmt.Errorf("failed to send start message: %w", err)
+	}
+	return nil
+}
+func wipe(b *gotgbot.Bot, ctx *ext.Context) error {
+	admins, err := ctx.EffectiveChat.GetAdministrators(b, nil)
+	if err != nil {
+		return err
+	}
+	result := false
+	for i := range admins {
+		if admins[i].GetUser().Id == ctx.EffectiveMessage.From.Id {
+			result = admins[i].MergeChatMember().CanDeleteMessages || admins[i].GetStatus() == "creator"
+			break
+		}
+	}
+	if !result {
+		return nil
+	}
+	data, ok := wipes.Load(ctx.EffectiveChat.Id)
+	if !ok {
+		code := rand.Intn(10000)
+		wipes.Store(ctx.EffectiveChat.Id, ctx.EffectiveMessage.From.Id ^ int64(code))
+		ctx.EffectiveMessage.Reply(b, fmt.Sprintf("⚠ ВНИМАНИЕ ⚠\n\nЭта команда навсегда (это очень долго) стирает данные Witless об этом чате!\nПосле удаления данные не подлежат восстановлению.\nДля подтверждения используйте команду `/wipe %04d` ещё раз в течение минуты", code), nil)
+		return nil
+	}
+	code, err := strconv.Atoi(strings.Split(ctx.EffectiveMessage.Text, " ")[1])
+	if err != nil {
+		return nil
+	}
+	if ctx.EffectiveMessage.From.Id ^ int64(code) != data {
+		return nil
+	}
+	query := `
+		DELETE FROM links WHERE chat = $1
+	`
+	_, err = db.Exec(query, ctx.EffectiveChat.Id)
+	if err != nil {
+		return err
+	}
+	_, err = ctx.EffectiveMessage.SetReaction(b, &gotgbot.SetMessageReactionOpts{Reaction: []gotgbot.ReactionType{gotgbot.ReactionTypeEmoji{Emoji: "👌"}}})
+	if err != nil {
+		return err
 	}
 	return nil
 }
