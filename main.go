@@ -34,12 +34,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("can't create bot: %s", err.Error())
 	}
+	redisHost := os.Getenv("REDIS_HOST")
 	redisClient = redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
+		Addr: redisHost,
 		Password: "",
 		DB: 0,
 	})
-	connection_string := "postgres://localhost:5432/postgres?sslmode=disable"
+	host := os.Getenv("POSTGRES_HOST")
+	user := os.Getenv("POSTGRES_USER")
+	password := os.Getenv("POSTGRES_PASSWORD")
+	dbname := os.Getenv("POSTGRES_DB")
+	connection_string := fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=disable", user, password, host, dbname)
 	db, err = sql.Open("postgres", connection_string)
 	if err != nil {
 		log.Fatalf("failed to open psql connection: %s", err.Error())
