@@ -108,6 +108,7 @@ func main() {
 	dispatcher.AddHandler(handlers.NewCommand("generate", generate_handler))
 	dispatcher.AddHandler(handlers.NewCommand("wipe", wipe))
 	dispatcher.AddHandler(handlers.NewMessage(message.Text, messages))
+	dispatcher.AddHandler(handlers.NewMessage(message.Sticker, stickers))
 
 	err = updater.StartPolling(b, &ext.PollingOpts{
 		DropPendingUpdates: true,
@@ -188,11 +189,37 @@ func generate_handler(b *gotgbot.Bot, ctx *ext.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to send start message: %w", err)
 	}
-	_, err = ctx.EffectiveMessage.Reply(b, text, nil)
-	if err != nil {
-		return err
+	err = handle_send(b, ctx, text, true)
+	return err
+}
+
+func stickers(b *gotgbot.Bot, ctx *ext.Context) error {
+	if ctx.EffectiveChat.Type == "private" || ctx.EffectiveChat.Type == "channel" {
+		return nil
 	}
-	return nil
+	log.Println(ctx.EffectiveMessage.Sticker.FileId)
+	// sticker := gotgbot.InputFileByID(ctx.EffectiveMessage.Sticker.FileId)
+	// _, err := b.SendSticker(ctx.EffectiveChat.Id, sticker, &gotgbot.SendStickerOpts{
+	// 	ReplyParameters: &gotgbot.ReplyParameters{
+	// 		MessageId: ctx.EffectiveMessage.MessageId,
+	// 	},
+	// })
+	// return err
+	if err := learn_sticker(ctx.EffectiveChat.Id, ctx.EffectiveMessage.Sticker.FileId); err != nil {
+		log.Printf("error learning on sticker: %s\n", err.Error())
+	}
+	isReplyToMe := ctx.EffectiveMessage.ReplyToMessage != nil && ctx.EffectiveMessage.ReplyToMessage.From.Id == b.User.Id
+	if !isReplyToMe && rand.Float64() > 0.20 { // 84%
+		return  nil
+	}
+	// 16%
+	text, err := generate(ctx.EffectiveChat.Id)
+	if err != nil {
+		log.Printf("error generating message: %s\n", err.Error())
+	}
+	log.Printf("Generated message: %s\n", text)
+	err = handle_send(b, ctx, text, isReplyToMe)
+	return err
 }
 func messages(b *gotgbot.Bot, ctx *ext.Context) error {
 	if ctx.EffectiveChat.Type == "private" || ctx.EffectiveChat.Type == "channel" {
@@ -216,12 +243,37 @@ func messages(b *gotgbot.Bot, ctx *ext.Context) error {
 		log.Printf("error generating message: %s\n", err.Error())
 	}
 	log.Printf("Generated message: %s\n", text)
-	if isReplyToMe {
-		_, err = ctx.EffectiveMessage.Reply(b, text, nil)
+	err = handle_send(b, ctx, text, isReplyToMe)
+	return err
+}
+
+const (
+	sticker_start_mark = "E'\x1d"
+	sticker_end_mark   = "'"
+)
+
+
+func handle_send(b *gotgbot.Bot, ctx *ext.Context, text string, reply bool) error {
+	if strings.HasPrefix(text, sticker_start_mark) && strings.HasSuffix(text, sticker_end_mark) {
+		sticker := gotgbot.InputFileByID(text[3:len(text)-1])
+		var replyParameters *gotgbot.ReplyParameters
+		if reply {
+			replyParameters = &gotgbot.ReplyParameters{
+				MessageId: ctx.EffectiveMessage.MessageId,
+			}
+		}
+		_, err := b.SendSticker(ctx.EffectiveChat.Id, sticker, &gotgbot.SendStickerOpts{
+			ReplyParameters: replyParameters,
+		})
 		return err
 	}
-	_, err = ctx.EffectiveChat.SendMessage(b, text, nil)
+	if reply {
+		_, err := ctx.EffectiveMessage.Reply(b, text, nil)
+		return err
+	}
+	_, err := ctx.EffectiveChat.SendMessage(b, text, nil)
 	return err
+
 }
 
 type tokenpair struct {
@@ -246,6 +298,19 @@ func learn(id int64, text string) error {
 	// }
 	// fmt.Println();
 	SaveLinksFromTokenPairs(pairs, id);
+	return nil
+}
+
+func learn_sticker(id int64, sticker string) error {
+	pairs := make([]*tokenpair, 2)
+	tokens, err := GetTokensByWords([]string{sticker_start_mark + sticker + sticker_end_mark})
+	log.Println(tokens)
+	if err != nil {
+		return err
+	}
+	pairs[0] = &tokenpair{Current: 1, Next: tokens[0]}
+	pairs[1] = &tokenpair{Current: tokens[0], Next: 2}
+	SaveLinksFromTokenPairs(pairs, id)
 	return nil
 }
 
