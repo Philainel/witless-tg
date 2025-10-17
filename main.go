@@ -9,7 +9,14 @@ import (
 	"strings"
 	"math/rand"
 	"sync"
+	"sort"
 	"strconv"
+	"net/http"
+	"net/url"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"crypto/rsa"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
@@ -17,6 +24,7 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/message"
 	"github.com/go-redis/redis/v8"
 	"github.com/lib/pq"
+	"github.com/golang-jwt/jwt/v5"
 
 	database "code.philainel.pw/philainel/witless-tg/db"
 )
@@ -24,17 +32,47 @@ import (
 var (
 	db *sql.DB
 	redisClient *redis.Client
+	bot *gotgbot.Bot
 	wipes sync.Map
+	webs sync.Map
+	token string
+	private *rsa.PrivateKey
+	public *rsa.PublicKey
 )
 
 func main() {
-	token := os.Getenv("TG_TOKEN")
+	token = os.Getenv("TG_TOKEN")
 	if token == "" {
 		log.Fatal("TG_TOKEN not set")
 	}
 	b, err := gotgbot.NewBot(token, nil)
 	if err != nil {
 		log.Fatalf("can't create bot: %s", err.Error())
+	}
+	bot = b
+	pubKeyLoc := os.Getenv("PUBLIC_KEY_PATH")
+	if pubKeyLoc == "" {
+		log.Fatal("PUBLIC_KEY_PATH not set")
+	}
+	privKeyLoc := os.Getenv("PRIVATE_KEY_PATH")
+	if privKeyLoc == "" {
+		log.Fatal("PRIVATE_KEY_PATH not set")
+	}
+	publicPem, err := os.ReadFile(pubKeyLoc)
+	if err != nil {
+		log.Fatalf("error reading file %s: %s", pubKeyLoc, err.Error())
+	}
+	privatePem, err := os.ReadFile(privKeyLoc)
+	if err != nil {
+		log.Fatalf("error reading file %s: %s", privKeyLoc, err.Error())
+	}
+	public, err = jwt.ParseRSAPublicKeyFromPEM(publicPem)
+	if err != nil {
+		log.Fatalf("can't parse public key: %s", err.Error())
+	}
+	private, err = jwt.ParseRSAPrivateKeyFromPEM(privatePem)
+	if err != nil {
+		log.Fatalf("can't parse private key: %s", err.Error())
 	}
 	redisHost := os.Getenv("REDIS_HOST")
 	redisClient = redis.NewClient(&redis.Options{
@@ -67,6 +105,7 @@ func main() {
 	dispatcher.AddHandler(handlers.NewCommand("start", start))
 	dispatcher.AddHandler(handlers.NewCommand("generate", generate_handler))
 	dispatcher.AddHandler(handlers.NewCommand("wipe", wipe))
+	dispatcher.AddHandler(handlers.NewCommand("web", web_handler))
 	dispatcher.AddHandler(handlers.NewMessage(message.Text, messages))
 	dispatcher.AddHandler(handlers.NewMessage(message.Sticker, stickers))
 
@@ -82,9 +121,192 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to start polling: %s", err.Error())
 	}
-	log.Printf("@%s has been started...\n", b.User.Username)
+	log.Printf("@%s has been started\n", b.User.Username)
+	
+	go api_server()
 
 	updater.Idle()
+}
+
+func web_handler(b *gotgbot.Bot, ctx *ext.Context) error {
+	if ctx.EffectiveChat.Type == "channel" {
+		return nil
+	}
+	if ctx.EffectiveChat.Type == "private" {
+		// TODO: code check
+		data, ok := webs.Load(ctx.EffectiveMessage.From.Id)
+		if !ok {
+			_, err := ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Что-бы открыть панель управления бота, перейдите в группу с ботом и воспользуйтесь командой ещё раз", code), nil)
+			return err
+		}
+		code, err := strconv.Atoi(strings.Split(ctx.EffectiveMessage.Text, " ")[1])
+		if err != nil {
+			return err
+		}
+		chatId := data ^ int64(code)
+		if chatId != data {
+			return nil
+		}
+
+		keyboard := [][]gotgbot.InlineKeyboardButton{{
+			gotgbot.InlineKeyboardButton{
+				Text: "Панель Управления",
+				WebApp: &gotgbot.WebAppInfo{
+					Url: fmt.Sprintf("%s?chat=%s", os.Getenv("WEB_APP_URL"), chatId),
+				},
+			},
+		}}
+		_, err := ctx.EffectiveMessage.Reply(
+			b,
+			"Нажмите на кнопку ниже, чтобы открыть Панель Управления:",
+			&gotgbot.SendMessageOpts{
+				ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+					InlineKeyboard: keyboard,
+				},
+			},
+		)
+		return err
+	}
+	// TODO: code gen
+	admins, err := ctx.EffectiveChat.GetAdministrators(b, nil)
+	if err != nil {
+		return err
+	}
+	result := false
+	for i := range admins {
+		if admins[i].GetUser().Id == ctx.EffectiveMessage.From.Id {
+			result = admins[i].MergeChatMember().CanManageChat || admins[i].GetStatus() == "creator"
+			break
+		}
+	}
+	if !result {
+		return nil
+	}
+	code := rand.Intn(10000)
+	webs.Store(ctx.EffectiveMessage.From.Id, ctx.EffectiveChat.Id ^ int64(code))
+	_, err := ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Что-бы открыть панель управления бота в этом чате, перейдите в личные сообщения и введите эту команду `/web %04d`", code), nil)
+	return err
+}
+
+func api_server() {
+	http.HandleFunc("/auth", authHandler)
+	http.HandleFunc("/chats", getChatsHandler)
+	http.Handle("/", http.FileServer(http.Dir("./web")))
+	log.Println("Serving API server on 0.0.0.0:8080")
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		panic(err);
+	}
+}
+
+func authHandler(w http.ResponseWriter, r *http.Request) {
+	data := r.URL.Query().Get("data")
+	if data == "" {
+		http.Error(w, "missing data", http.StatusBadRequest)
+		return
+	}
+	values, err := url.ParseQuery(data)
+	if err != nil {
+		http.Error(w, "invalid data", http.StatusBadRequest)
+		return
+	}
+	hash := values.Get("hash")
+	values.Del("hash")
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var dataCheckStrings []string
+	for _, k := range keys {
+		dataCheckStrings = append(dataCheckStrings, k+"="+values.Get(k))
+	}
+	dataCheckString := strings.Join(dataCheckStrings, "\n")
+	h := hmac.New(sha256.New, []byte("WebAppData"))
+	h.Write([]byte(token))
+	secretKey := h.Sum(nil)
+	h2 := hmac.New(sha256.New, secretKey)
+	h2.Write([]byte(dataCheckString))
+	expectedHash := hex.EncodeToString(h2.Sum(nil))
+	if !hmac.Equal([]byte(expectedHash), []byte(hash)){
+		http.Error(w, "invalid hash", http.StatusUnauthorized)
+		return
+	}
+	authDateStr := values.Get("auth_date")
+	if authDateStr != "" {
+		sec, _ := time.ParseDuration(authDateStr + "s")
+		if time.Since(time.Unix(int64(sec.Seconds()), 0)) > 24*time.Hour {
+			http.Error(w, "data expired", http.StatusUnauthorized)
+			return
+		}
+	}
+	claims := jwt.MapClaims{
+		"id": values.Get("id"),
+		"first_name": values.Get("first_name"),
+		"username": values.Get("username"),
+		"exp": time.Now().Add(24 * time.Hour).Unix(),
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	signedToken, err := token.SignedString(private)
+	if err != nil {
+		http.Error(w, "failed to sign token", http.StatusInternalServerError)
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name: "auth-token",
+		Value: signedToken,
+		Path: "/",
+		HttpOnly: true,
+		Secure: true,
+		Partitioned: true,
+		SameSite: http.SameSiteNoneMode,
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"ok":true,"message":"Auth successful"}`))
+}
+
+func getChatsHandler(w http.ResponseWriter, r *http.Request) {
+	if err := validateToken(r); err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+	}
+	w.Write([]byte("ok"))
+}
+
+func validateToken(r *http.Request) error {
+	cookie, err := r.Cookie("auth-token")
+	if err != nil {
+		return fmt.Errorf("missing auth token")
+	}
+
+	token, err := jwt.Parse(cookie.Value, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
+			return nil, fmt.Errorf("unexpected signing method")
+		}
+		return public, nil
+	})
+	if err != nil {
+		return fmt.Errorf("invalid token: %s", err.Error())
+	}
+
+	if !token.Valid {
+		return fmt.Errorf("token not valid")
+	}
+
+	if claims, ok := token.Claims.(jwt.MapClaims); ok {
+		if exp, ok := claims["exp"].(float64); ok {
+			if time.Now().Unix() > int64(exp) {
+				return fmt.Errorf("token expired")
+			}
+		} else {
+			return fmt.Errorf("missing exp claim")
+		}
+	} else {
+		return fmt.Errorf("invalid claims format")
+	}
+
+	return nil
 }
 
 func start(b *gotgbot.Bot, ctx *ext.Context) error {
@@ -102,6 +324,9 @@ func start(b *gotgbot.Bot, ctx *ext.Context) error {
 	return nil
 }
 func wipe(b *gotgbot.Bot, ctx *ext.Context) error {
+	if ctx.EffectiveChat.Type == "private" || ctx.EffectiveChat.Type == "channel" {
+		return nil
+	}
 	admins, err := ctx.EffectiveChat.GetAdministrators(b, nil)
 	if err != nil {
 		return err
@@ -125,7 +350,7 @@ func wipe(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 	code, err := strconv.Atoi(strings.Split(ctx.EffectiveMessage.Text, " ")[1])
 	if err != nil {
-		return nil
+		return err
 	}
 	if ctx.EffectiveMessage.From.Id ^ int64(code) != data {
 		return nil
@@ -158,21 +383,14 @@ func stickers(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 	log.Println(ctx.EffectiveMessage.Sticker.FileId)
-	// sticker := gotgbot.InputFileByID(ctx.EffectiveMessage.Sticker.FileId)
-	// _, err := b.SendSticker(ctx.EffectiveChat.Id, sticker, &gotgbot.SendStickerOpts{
-	// 	ReplyParameters: &gotgbot.ReplyParameters{
-	// 		MessageId: ctx.EffectiveMessage.MessageId,
-	// 	},
-	// })
-	// return err
 	if err := learn_sticker(ctx.EffectiveChat.Id, ctx.EffectiveMessage.Sticker.FileId); err != nil {
 		log.Printf("error learning on sticker: %s\n", err.Error())
 	}
 	isReplyToMe := ctx.EffectiveMessage.ReplyToMessage != nil && ctx.EffectiveMessage.ReplyToMessage.From.Id == b.User.Id
-	if !isReplyToMe && rand.Float64() > 0.20 { // 84%
+	if !isReplyToMe && rand.Float64() > 0.20 { // 80%
 		return  nil
 	}
-	// 16%
+	// 20%
 	text, err := generate(ctx.EffectiveChat.Id)
 	if err != nil {
 		log.Printf("error generating message: %s\n", err.Error())
@@ -253,10 +471,6 @@ func learn(id int64, text string) error {
 		pairs = append(pairs, &tokenpair{Current: tokens[i], Next: tokens[i+1]})
 	}
 	pairs = append(pairs, &tokenpair{Current: tokens[len(tokens)-1], Next: 2})
-	// for _, x := range pairs {
-	// 	fmt.Printf("%d — %d; ", x.Current, x.Next)
-	// }
-	// fmt.Println();
 	SaveLinksFromTokenPairs(pairs, id);
 	return nil
 }
@@ -337,11 +551,6 @@ func generate(id int64) (string, error) {
 			}
 			nexts = append(nexts, next)
 		}
-		// fmt.Printf("%d : ", current)
-		// for _, n := range nexts {
-		// 	fmt.Printf("%d (%d) ", n.Next, n.Count)
-		// }
-		// fmt.Printf("\n")
 		total := 0;
 		for i := range nexts {
 			total += nexts[i].Count
@@ -362,9 +571,6 @@ func generate(id int64) (string, error) {
 		tokens = append(tokens, next)
 		current = next
 	}
-	// for _, t := range tokens {
-	// 	fmt.Printf("%d, ", t)
-	// }
 	query = `
 		SELECT id, word FROM token WHERE id = ANY($1)
 	`
