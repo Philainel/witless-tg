@@ -16,6 +16,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"crypto/rsa"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
@@ -133,30 +134,54 @@ func web_handler(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 	if ctx.EffectiveChat.Type == "private" {
-		// TODO: code check
-		data, ok := webs.Load(ctx.EffectiveMessage.From.Id)
-		if !ok {
-			_, err := ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Что-бы открыть панель управления бота, перейдите в группу с ботом и воспользуйтесь командой ещё раз", code), nil)
+		parts := strings.Split(ctx.EffectiveMessage.Text, " ")
+		if len(parts) < 2 {
+			_, err := ctx.EffectiveMessage.Reply(b, "Что-бы открыть панель управления бота, перейдите в группу с ботом и воспользуйтесь командой ещё раз", nil)
 			return err
 		}
-		code, err := strconv.Atoi(strings.Split(ctx.EffectiveMessage.Text, " ")[1])
+		code, err := strconv.Atoi(parts[1])
 		if err != nil {
 			return err
 		}
+		// TODO: code check
+		raw, ok := webs.Load(ctx.EffectiveMessage.From.Id)
+		if !ok {
+			_, err := ctx.EffectiveMessage.Reply(b, "Что-бы открыть панель управления бота, перейдите в группу с ботом и воспользуйтесь командой ещё раз", nil)
+			return err
+		}
+		data, ok := raw.(int64)
+		if !ok {
+			return fmt.Errorf("How did we get here? (/web raw->int64 failed)")
+		}
 		chatId := data ^ int64(code)
-		if chatId != data {
+		chat, err := b.GetChat(chatId, &gotgbot.GetChatOpts{})
+		if err != nil {
+			return err
+		}
+		admins, err := chat.ToChat().GetAdministrators(b, nil)
+		if err != nil {
+			return err
+		}
+		result := false
+		for i := range admins {
+			if admins[i].GetUser().Id == ctx.EffectiveMessage.From.Id {
+				result = admins[i].MergeChatMember().CanManageChat || admins[i].GetStatus() == "creator"
+				break
+			}
+		}
+		if !result {
 			return nil
 		}
-
+	
 		keyboard := [][]gotgbot.InlineKeyboardButton{{
 			gotgbot.InlineKeyboardButton{
 				Text: "Панель Управления",
 				WebApp: &gotgbot.WebAppInfo{
-					Url: fmt.Sprintf("%s?chat=%s", os.Getenv("WEB_APP_URL"), chatId),
+					Url: fmt.Sprintf("%s?chat=%d", os.Getenv("WEB_APP_URL"), chatId),
 				},
 			},
 		}}
-		_, err := ctx.EffectiveMessage.Reply(
+		_, err = ctx.EffectiveMessage.Reply(
 			b,
 			"Нажмите на кнопку ниже, чтобы открыть Панель Управления:",
 			&gotgbot.SendMessageOpts{
@@ -184,13 +209,13 @@ func web_handler(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 	code := rand.Intn(10000)
 	webs.Store(ctx.EffectiveMessage.From.Id, ctx.EffectiveChat.Id ^ int64(code))
-	_, err := ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Что-бы открыть панель управления бота в этом чате, перейдите в личные сообщения и введите эту команду `/web %04d`", code), nil)
+	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Чтобы открыть панель управления бота в этом чате, перейдите в личные сообщения и введите эту команду `/web %04d`", code), &gotgbot.SendMessageOpts{ParseMode: "Markdown"})
 	return err
 }
 
 func api_server() {
 	http.HandleFunc("/auth", authHandler)
-	http.HandleFunc("/chats", getChatsHandler)
+	http.HandleFunc("/chat", getChatHandler)
 	http.Handle("/", http.FileServer(http.Dir("./web")))
 	log.Println("Serving API server on 0.0.0.0:8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
@@ -240,9 +265,7 @@ func authHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	claims := jwt.MapClaims{
-		"id": values.Get("id"),
-		"first_name": values.Get("first_name"),
-		"username": values.Get("username"),
+		"user": values.Get("user"),
 		"exp": time.Now().Add(24 * time.Hour).Unix(),
 	}
 
@@ -264,20 +287,45 @@ func authHandler(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"ok":true,"message":"Auth successful"}`))
+	w.Write([]byte(fmt.Sprintf(`{"ok":true,"message":"Auth successful","user":%s}`, values.Get("user"))))
 }
 
-func getChatsHandler(w http.ResponseWriter, r *http.Request) {
-	if err := validateToken(r); err != nil {
+type User struct {
+	Id int64 `json:"id"`
+	FirstName string `json:"first_name"`
+	LastName string `json:"last_name"`
+	Username string `json:"username"`
+	LanguageCode string `json:"language_code"`
+	PhotoUrl string `json:"photo_url"`
+}
+
+func getChatHandler(w http.ResponseWriter, r *http.Request) {
+	claims, err := validateToken(r);
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
 	}
-	w.Write([]byte("ok"))
+	var data User
+	user, ok := claims["user"].(string)
+	if !ok {
+		log.Println("error convarting claim 'user' to string")
+		http.Error(w, "{}", http.StatusInternalServerError)
+		return
+	}
+	log.Println(user)
+	if err := json.Unmarshal([]byte(user), &data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	log.Println(data)
+	log.Println(data.Id)
+	w.Write([]byte("{}"))
 }
 
-func validateToken(r *http.Request) error {
+func validateToken(r *http.Request) (jwt.MapClaims, error) {
 	cookie, err := r.Cookie("auth-token")
 	if err != nil {
-		return fmt.Errorf("missing auth token")
+		return nil, fmt.Errorf("missing auth token")
 	}
 
 	token, err := jwt.Parse(cookie.Value, func(t *jwt.Token) (interface{}, error) {
@@ -287,26 +335,25 @@ func validateToken(r *http.Request) error {
 		return public, nil
 	})
 	if err != nil {
-		return fmt.Errorf("invalid token: %s", err.Error())
+		return nil, fmt.Errorf("invalid token: %s", err.Error())
 	}
 
 	if !token.Valid {
-		return fmt.Errorf("token not valid")
+		return nil, fmt.Errorf("token not valid")
 	}
 
 	if claims, ok := token.Claims.(jwt.MapClaims); ok {
 		if exp, ok := claims["exp"].(float64); ok {
 			if time.Now().Unix() > int64(exp) {
-				return fmt.Errorf("token expired")
+				return nil, fmt.Errorf("token expired")
 			}
+			return claims, nil
 		} else {
-			return fmt.Errorf("missing exp claim")
+			return nil, fmt.Errorf("missing exp claim")
 		}
 	} else {
-		return fmt.Errorf("invalid claims format")
+		return nil, fmt.Errorf("invalid claims format")
 	}
-
-	return nil
 }
 
 func start(b *gotgbot.Bot, ctx *ext.Context) error {
@@ -345,8 +392,8 @@ func wipe(b *gotgbot.Bot, ctx *ext.Context) error {
 	if !ok {
 		code := rand.Intn(10000)
 		wipes.Store(ctx.EffectiveChat.Id, ctx.EffectiveMessage.From.Id ^ int64(code))
-		ctx.EffectiveMessage.Reply(b, fmt.Sprintf("⚠ ВНИМАНИЕ ⚠\n\nЭта команда навсегда (это очень долго) стирает данные Witless об этом чате!\nПосле удаления данные не подлежат восстановлению.\nДля подтверждения используйте команду `/wipe %04d` ещё раз в течение минуты", code), nil)
-		return nil
+		_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("⚠ ВНИМАНИЕ ⚠\n\nЭта команда навсегда (это очень долго) стирает данные Witless об этом чате!\nПосле удаления данные не подлежат восстановлению.\nДля подтверждения используйте команду `/wipe %04d` ещё раз в течение минуты", code), &gotgbot.SendMessageOpts{ParseMode: "Markdown"})
+		return err
 	}
 	code, err := strconv.Atoi(strings.Split(ctx.EffectiveMessage.Text, " ")[1])
 	if err != nil {

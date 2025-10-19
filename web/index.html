@@ -7,11 +7,23 @@
 	<body>
 		Page
 		<script>
-		const authData = window?.Telegram?.WebApp?.initData || '';
-		fetch("/auth?data=" + encodeURIComponent(authData))
-			.then(r => r.text())
-			.then(console.log)
-			.catch(console.error)
-		</script>	
+			async function fetchChat(chatId) {
+				const res = await fetch("/chat?chat="+chatId)
+				const data = await res.json()
+				return data
+			}
+
+			const search = new URLSearchParams(window.location.search)
+			const chatId = search.get("chat")
+			if (chatId == 0) {
+				// show error
+			}
+			const authData = window?.Telegram?.WebApp?.initData || '';
+			fetch("/auth?data=" + encodeURIComponent(authData))
+				.then(r => r.text())
+				.then(() => fetchChat(chatId))
+				.then(console.log)
+				.catch(console.error) // show error
+		</script>
 	</body>
 </html>
