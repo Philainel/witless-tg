@@ -17,6 +17,8 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/message"
 	"github.com/go-redis/redis/v8"
 	"github.com/lib/pq"
+
+	database "code.philainel.pw/philainel/witless-tg/db"
 )
 
 var (
@@ -50,52 +52,10 @@ func main() {
 		log.Fatalf("failed to open psql connection: %s", err.Error())
 	}
 	defer db.Close()
-	query := `
-		CREATE TABLE IF NOT EXISTS token (
-			id BIGSERIAL PRIMARY KEY,
-			word TEXT NOT NULL UNIQUE
-		)
-	`
-	_, err = db.Exec(query)
+	err = database.PerformMigration(db, 2)
 	if err != nil {
-		log.Fatalf("cannot create table token: %s", err.Error())
+		log.Fatalf("cannot perform migration: %s", err.Error())
 	}
-	{
-		query = `
-			SELECT id FROM token WHERE id = 1
-		`
-		var id int64
-		err := db.QueryRow(query).Scan(&id)
-		if err == sql.ErrNoRows {
-			query = `
-				INSERT INTO token (word) VALUES (E'\x1f'), (E'\x1c')
-			`
-			_, err = db.Exec(query)
-			if err != nil {
-				log.Fatalf("can't create START and END tokens: %s", err.Error())
-			}
-		}
-		if err != nil {
-			log.Fatalf("can't ensure there's START and END tokens: %s", err.Error())
-		}
-	}
-	query = `
-		CREATE TABLE IF NOT EXISTS links (
-			token BIGINT,
-			chat BIGINT,
-			next BIGINT,
-			count INT,
-
-			FOREIGN KEY (token) REFERENCES token(id),
-			FOREIGN KEY (next) REFERENCES token(id),
-			PRIMARY KEY (token, chat, next)
-		)
-	`
-	_, err = db.Exec(query)
-	if err != nil {
-		log.Fatalf("cannot create table links: %s", err.Error())
-	}
-
 	dispatcher := ext.NewDispatcher(&ext.DispatcherOpts{
 		Error: func(b *gotgbot.Bot, ctx *ext.Context, err error) ext.DispatcherAction {
 			log.Println("an error occured while handling update:", err.Error())
