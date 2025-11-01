@@ -5,25 +5,72 @@
 		<script src="https://telegram.org/js/telegram-web-app.js?59"></script>
 	</head>
 	<body>
-		Page
+		<div id="loading">
+			loading...
+		</div>
+		<div id="error-box" hidden>shouldn't show</div>
+		<div id="chat-panel" hidden>
+			<select id="select-bot-mode">
+				<option value="on">Learning and generating</option>
+				<option value="learning">Only learning</option>
+				<option value="messaging">Only generating</option>
+				<option value="off">Off</option>
+			</select>
+			<input id="message-generation-chance" type="number" max="100" min="0" step="0.1" placeholder="9"></input>
+			<button id="apply">Apply</button>
+		</div>
 		<script>
+			const chatPanelBox = document.getElementById("chat-panel")
+			const loadingBox = document.getElementById("loading")
 			async function fetchChat(chatId) {
 				const res = await fetch("/chat?chat="+chatId)
 				const data = await res.json()
 				return data
 			}
-
+			function applySettings(id, data) {
+				fetch("/chat?chat=" + id, {
+					method: "POST",
+					body: JSON.stringify(data),
+					headers: {
+						"Content-Type": "application/json"
+					}
+				})
+			}
+			function showChatPanel(data) {
+				console.log(data)
+				loadingBox.hidden = true
+				chatPanelBox.hidden = false
+				chatPanelBox.classList = "chat-panel"
+				const mode = document.getElementById("select-bot-mode")
+				const chance = document.getElementById("message-generation-chance")
+				chance.value = data.settings.rate / 10
+				mode.value = data.settings.mode
+				document.getElementById("apply").addEventListener("click", (e) => {
+					console.log(mode.value)
+					console.log(chance.value)
+					applySettings(data.id, { rate: chance.value * 10, mode: mode.value })
+						.then(console.log)
+						.catch(console.error) // show error
+				})
+			}
 			const search = new URLSearchParams(window.location.search)
 			const chatId = search.get("chat")
 			if (chatId == 0) {
 				// show error
 			}
+		
 			const authData = window?.Telegram?.WebApp?.initData || '';
 			fetch("/auth?data=" + encodeURIComponent(authData))
 				.then(r => r.text())
 				.then(() => fetchChat(chatId))
-				.then(console.log)
+				.then(showChatPanel)
 				.catch(console.error) // show error
 		</script>
+<style>
+.chat-panel {
+	display: flex;
+	flex-direction: column
+}
+</style>
 	</body>
 </html>

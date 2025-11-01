@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"crypto/rsa"
+	"io"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
@@ -287,7 +288,7 @@ func authHandler(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(fmt.Sprintf(`{"ok":true,"message":"Auth successful","user":%s}`, values.Get("user"))))
+	fmt.Fprintf(w, `{"ok":true,"message":"Auth successful","user":%s}`, values.Get("user"))
 }
 
 type User struct {
@@ -299,7 +300,25 @@ type User struct {
 	PhotoUrl string `json:"photo_url"`
 }
 
+type chatData struct {
+	Id int64 `json:"id"`;
+	Title string `json:"title"`;
+	Photo *gotgbot.ChatPhoto `json:"photo"`;
+	Settings *chatSettings `json:"settings"`
+}
+
+type chatSettings struct {
+	Rate int16 `json:"rate"`;
+	Mode string `json:"mode"`
+}
+
 func getChatHandler(w http.ResponseWriter, r *http.Request) {
+	chatIdInt, err := strconv.Atoi(r.URL.Query().Get("chat"))
+	if (err != nil) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	chatId := int64(chatIdInt)
 	claims, err := validateToken(r);
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
@@ -312,14 +331,68 @@ func getChatHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "{}", http.StatusInternalServerError)
 		return
 	}
-	log.Println(user)
 	if err := json.Unmarshal([]byte(user), &data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	tgChat, err := bot.GetChat(chatId, &gotgbot.GetChatOpts{})
+	if err != nil {
+		log.Printf("error fetching chat from Telegram: %s", err.Error())
+		http.Error(w, "{}", http.StatusInternalServerError)
+	}
 	log.Println(data)
 	log.Println(data.Id)
-	w.Write([]byte("{}"))
+	if r.Method == "GET" {
+		rate, mode, err := database.GetChatById(db, chatId)
+		if err != nil {
+			log.Printf("error db.GetChatById(...): %s", err.Error())
+			http.Error(w, "{}", http.StatusInternalServerError)
+			return
+		}
+		chat := &chatData{
+			Id: chatId,
+			Photo: tgChat.Photo,
+			Title: tgChat.Title,
+			Settings: &chatSettings {
+				Rate: rate,
+				Mode: mode,
+			},
+		}
+		res, err := json.Marshal(chat)
+		if err != nil {
+			log.Printf("failed to marashal json for reply: %s", err.Error())
+			http.Error(w, "{}", http.StatusInternalServerError)
+			return
+		}
+		w.Write([]byte(res))
+		return
+	}
+	if (r.Method == "POST") {
+		var parameters chatSettings
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			log.Printf("failed to read r.Body: %s", err.Error())
+			http.Error(w, "{}", http.StatusInternalServerError)
+			return
+		}
+		log.Println(string(body))
+		err = json.Unmarshal(body, &parameters)
+		if err != nil {
+			log.Printf("json.Unmarshal(body, &parameters) failed: %s", err.Error())
+			http.Error(w, "{}", http.StatusInternalServerError)
+			return
+		}
+		log.Println(parameters)
+		err = database.ApplyChatSettingsById(db, chatId, parameters.Rate, parameters.Mode)
+		if err != nil {
+			log.Printf("failed to apply settings (rate %.3d, mode %s) to chat %d: %s", parameters.Rate, parameters.Mode, chatId, err.Error())
+			http.Error(w, "{}", http.StatusInternalServerError)
+			return
+		}
+		w.Write([]byte("{\"ok\": true}"))
+		return
+	}
+	http.Error(w, "{}", http.StatusBadRequest)
 }
 
 func validateToken(r *http.Request) (jwt.MapClaims, error) {
@@ -328,7 +401,7 @@ func validateToken(r *http.Request) (jwt.MapClaims, error) {
 		return nil, fmt.Errorf("missing auth token")
 	}
 
-	token, err := jwt.Parse(cookie.Value, func(t *jwt.Token) (interface{}, error) {
+	token, err := jwt.Parse(cookie.Value, func(t *jwt.Token) (any, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, fmt.Errorf("unexpected signing method")
 		}
