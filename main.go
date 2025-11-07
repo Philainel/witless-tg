@@ -430,6 +430,12 @@ func validateToken(r *http.Request) (jwt.MapClaims, error) {
 }
 
 func start(b *gotgbot.Bot, ctx *ext.Context) error {
+	if ctx.EffectiveChat.Type == gotgbot.ChatTypeGroup || ctx.EffectiveChat.Type == gotgbot.ChatTypeSupergroup {
+		err := database.InitDefaultSettings(db, ctx.EffectiveChat.Id)
+		if err != nil {
+			log.Printf("failed to ensure chat settings record exists: %s", err.Error())
+		}
+	}
 	_, err := ctx.EffectiveMessage.Reply(b, 
 		fmt.Sprintf(
 			"Привет! Я @%s — Реинкарнация бота из VK.\n\nЯ работаю только в групповых чатах, где обучаюсь на сообщениях,  затем сам начинаю писать разные приколы.", 
@@ -482,6 +488,8 @@ func wipe(b *gotgbot.Bot, ctx *ext.Context) error {
 	if err != nil {
 		return err
 	}
+	err = database.ResetToDefaultSettings(db, ctx.EffectiveChat.Id)
+	if err != nil { return err }
 	_, err = ctx.EffectiveMessage.SetReaction(b, &gotgbot.SetMessageReactionOpts{Reaction: []gotgbot.ReactionType{gotgbot.ReactionTypeEmoji{Emoji: "👌"}}})
 	if err != nil {
 		return err
@@ -502,15 +510,21 @@ func stickers(b *gotgbot.Bot, ctx *ext.Context) error {
 	if ctx.EffectiveChat.Type == "private" || ctx.EffectiveChat.Type == "channel" {
 		return nil
 	}
-	log.Println(ctx.EffectiveMessage.Sticker.FileId)
-	if err := learn_sticker(ctx.EffectiveChat.Id, ctx.EffectiveMessage.Sticker.FileId); err != nil {
-		log.Printf("error learning on sticker: %s\n", err.Error())
+	chance, mode, err := database.GetChatById(db, ctx.EffectiveChat.Id)
+	if err != nil { return err }
+	if mode == "off" { return nil }
+
+	if mode != "messaging" {
+		if err := learn_sticker(ctx.EffectiveChat.Id, ctx.EffectiveMessage.Sticker.FileId); err != nil {
+			log.Printf("error learning on sticker: %s\n", err.Error())
+		}
 	}
+
 	isReplyToMe := ctx.EffectiveMessage.ReplyToMessage != nil && ctx.EffectiveMessage.ReplyToMessage.From.Id == b.User.Id
-	if !isReplyToMe && rand.Float64() > 0.20 { // 80%
+	if !isReplyToMe && (rand.Float64() > float64(chance / 1000) || mode == "learning") { // chance in ppm
 		return  nil
 	}
-	// 20%
+
 	text, err := generate(ctx.EffectiveChat.Id)
 	if err != nil {
 		log.Printf("error generating message: %s\n", err.Error())
@@ -523,26 +537,32 @@ func messages(b *gotgbot.Bot, ctx *ext.Context) error {
 	if ctx.EffectiveChat.Type == "private" || ctx.EffectiveChat.Type == "channel" {
 		return nil
 	}
-	// log.Println(ctx.EffectiveMessage.Text)
+
+	chance, mode, err := database.GetChatById(db, ctx.EffectiveChat.Id)
+	if err != nil { return err }
+	if mode == "off" { return nil }
+
 	if ctx.EffectiveMessage.Text[0] == '/' {
 		return nil
 	}
-	err := learn(ctx.EffectiveChat.Id, ctx.EffectiveMessage.Text)
-	if err != nil {
-		log.Printf("error learning on message: %s\n", err.Error())
+
+	if mode != "messaging" {
+		err := learn(ctx.EffectiveChat.Id, ctx.EffectiveMessage.Text)
+		if err != nil {
+			log.Printf("error learning on message: %s\n", err.Error())
+		}
 	}
 	isReplyToMe := ctx.EffectiveMessage.ReplyToMessage != nil && ctx.EffectiveMessage.ReplyToMessage.From.Id == b.User.Id
-	if !isReplyToMe && rand.Float64() > 0.20 { // 84%
-		return  nil
+	if isReplyToMe || (rand.Float64() <= float64(chance) / 1000.0 && mode != "learning") { // chance in ppm
+		text, err := generate(ctx.EffectiveChat.Id)
+		if err != nil {
+			log.Printf("error generating message: %s\n", err.Error())
+		}
+		log.Printf("Generated message: %s\n", text)
+		err = handle_send(b, ctx, text, isReplyToMe)
+		return err
 	}
-	// 16%
-	text, err := generate(ctx.EffectiveChat.Id)
-	if err != nil {
-		log.Printf("error generating message: %s\n", err.Error())
-	}
-	log.Printf("Generated message: %s\n", text)
-	err = handle_send(b, ctx, text, isReplyToMe)
-	return err
+	return nil
 }
 
 const (
