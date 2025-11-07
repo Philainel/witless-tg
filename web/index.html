@@ -3,6 +3,7 @@
 	<head>
 		<title>Witless Web</title>
 		<script src="https://telegram.org/js/telegram-web-app.js?59"></script>
+		<link rel="stylesheet" href="/main.css"></link>
 	</head>
 	<body>
 		<div id="loading">
@@ -10,13 +11,22 @@
 		</div>
 		<div id="error-box" hidden>shouldn't show</div>
 		<div id="chat-panel" hidden>
-			<select id="select-bot-mode">
-				<option value="on">Learning and generating</option>
-				<option value="learning">Only learning</option>
-				<option value="messaging">Only generating</option>
-				<option value="off">Off</option>
-			</select>
-			<input id="message-generation-chance" type="number" max="100" min="0" step="0.1" placeholder="9"></input>
+			<div>
+				<label>Bot mode:</label>
+				<select id="select-bot-mode">
+					<option value="on">Learning and generating</option>
+					<option value="learning">Only learning</option>
+					<option value="messaging">Only generating</option>
+					<option value="off">Off</option>
+				</select>
+			</div>
+			<div>
+				<label>Generation chance:</label>
+				<span>
+				<input id="message-generation-chance" type="number" max="100" min="0" step="0.1" placeholder="9"></input>
+				%
+				</span>
+			</div>
 			<button id="apply">Apply</button>
 		</div>
 		<script>
@@ -66,11 +76,5 @@
 				.then(showChatPanel)
 				.catch(console.error) // show error
 		</script>
-<style>
-.chat-panel {
-	display: flex;
-	flex-direction: column
-}
-</style>
 	</body>
 </html>
