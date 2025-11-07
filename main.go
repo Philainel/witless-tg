@@ -246,7 +246,8 @@ type chatData struct {
 	Id int64 `json:"id"`;
 	Title string `json:"title"`;
 	Photo *gotgbot.ChatPhoto `json:"photo"`;
-	Settings *chatSettings `json:"settings"`
+	Settings *chatSettings `json:"settings"`;
+	Editable bool `json:"editable"`
 }
 
 type chatSettings struct {
@@ -282,6 +283,18 @@ func getChatHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("error fetching chat from Telegram: %s", err.Error())
 		http.Error(w, "{}", http.StatusInternalServerError)
 	}
+	admins, err := tgChat.ToChat().GetAdministrators(bot, nil)
+	editable := false
+	if err != nil {
+		http.Error(w, "{}", http.StatusInternalServerError)
+		return
+	}
+	for i := range admins {
+		if admins[i].GetUser().Id == data.Id {
+			editable = admins[i].MergeChatMember().CanManageChat || admins[i].GetStatus() == "creator"
+			break
+		}
+	}
 	log.Println(data)
 	log.Println(data.Id)
 	if r.Method == "GET" {
@@ -299,6 +312,7 @@ func getChatHandler(w http.ResponseWriter, r *http.Request) {
 				Rate: rate,
 				Mode: mode,
 			},
+			Editable: editable,
 		}
 		res, err := json.Marshal(chat)
 		if err != nil {
@@ -310,6 +324,10 @@ func getChatHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if (r.Method == "POST") {
+		if !editable {
+			http.Error(w, "{}", http.StatusForbidden)
+			return
+		}
 		var parameters chatSettings
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
