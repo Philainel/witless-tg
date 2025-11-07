@@ -210,7 +210,23 @@ func web_handler(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 	code := rand.Intn(10000)
 	webs.Store(ctx.EffectiveMessage.From.Id, ctx.EffectiveChat.Id ^ int64(code))
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Чтобы открыть панель управления бота в этом чате, перейдите в личные сообщения и введите эту команду `/web %04d`", code), &gotgbot.SendMessageOpts{ParseMode: "Markdown"})
+	// _, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Чтобы открыть панель управления бота в этом чате, перейдите в личные сообщения и введите эту команду `/web %04d`", code), &gotgbot.SendMessageOpts{ParseMode: "Markdown"})
+	keyboard := [][]gotgbot.InlineKeyboardButton{{
+		gotgbot.InlineKeyboardButton{
+			Text: "Панель Управления",
+			Url: fmt.Sprintf("https://t.me/%s/panel?startapp=%d", b.User.Username, ctx.EffectiveChat.Id),
+		},
+	}}
+	_, err = ctx.EffectiveMessage.Reply(
+		b,
+		"Нажмите на кнопку ниже, чтобы открыть Панель Управления:",
+		&gotgbot.SendMessageOpts{
+		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+				InlineKeyboard: keyboard,
+			},
+		},
+	)
+
 	return err
 }
 
