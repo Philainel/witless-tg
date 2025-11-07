@@ -36,7 +36,6 @@ var (
 	redisClient *redis.Client
 	bot *gotgbot.Bot
 	wipes sync.Map
-	webs sync.Map
 	token string
 	private *rsa.PrivateKey
 	public *rsa.PublicKey
@@ -135,89 +134,16 @@ func web_handler(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 	if ctx.EffectiveChat.Type == "private" {
-		parts := strings.Split(ctx.EffectiveMessage.Text, " ")
-		if len(parts) < 2 {
-			_, err := ctx.EffectiveMessage.Reply(b, "Что-бы открыть панель управления бота, перейдите в группу с ботом и воспользуйтесь командой ещё раз", nil)
-			return err
-		}
-		code, err := strconv.Atoi(parts[1])
-		if err != nil {
-			return err
-		}
-		// TODO: code check
-		raw, ok := webs.Load(ctx.EffectiveMessage.From.Id)
-		if !ok {
-			_, err := ctx.EffectiveMessage.Reply(b, "Что-бы открыть панель управления бота, перейдите в группу с ботом и воспользуйтесь командой ещё раз", nil)
-			return err
-		}
-		data, ok := raw.(int64)
-		if !ok {
-			return fmt.Errorf("How did we get here? (/web raw->int64 failed)")
-		}
-		chatId := data ^ int64(code)
-		chat, err := b.GetChat(chatId, &gotgbot.GetChatOpts{})
-		if err != nil {
-			return err
-		}
-		admins, err := chat.ToChat().GetAdministrators(b, nil)
-		if err != nil {
-			return err
-		}
-		result := false
-		for i := range admins {
-			if admins[i].GetUser().Id == ctx.EffectiveMessage.From.Id {
-				result = admins[i].MergeChatMember().CanManageChat || admins[i].GetStatus() == "creator"
-				break
-			}
-		}
-		if !result {
-			return nil
-		}
-	
-		keyboard := [][]gotgbot.InlineKeyboardButton{{
-			gotgbot.InlineKeyboardButton{
-				Text: "Панель Управления",
-				WebApp: &gotgbot.WebAppInfo{
-					Url: fmt.Sprintf("%s?chat=%d", os.Getenv("WEB_APP_URL"), chatId),
-				},
-			},
-		}}
-		_, err = ctx.EffectiveMessage.Reply(
-			b,
-			"Нажмите на кнопку ниже, чтобы открыть Панель Управления:",
-			&gotgbot.SendMessageOpts{
-				ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-					InlineKeyboard: keyboard,
-				},
-			},
-		)
+		_, err := ctx.EffectiveMessage.Reply(b, "Что-бы открыть панель управления бота, перейдите в группу с ботом и воспользуйтесь командой ещё раз", nil)
 		return err
 	}
-	// TODO: code gen
-	admins, err := ctx.EffectiveChat.GetAdministrators(b, nil)
-	if err != nil {
-		return err
-	}
-	result := false
-	for i := range admins {
-		if admins[i].GetUser().Id == ctx.EffectiveMessage.From.Id {
-			result = admins[i].MergeChatMember().CanManageChat || admins[i].GetStatus() == "creator"
-			break
-		}
-	}
-	if !result {
-		return nil
-	}
-	code := rand.Intn(10000)
-	webs.Store(ctx.EffectiveMessage.From.Id, ctx.EffectiveChat.Id ^ int64(code))
-	// _, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Чтобы открыть панель управления бота в этом чате, перейдите в личные сообщения и введите эту команду `/web %04d`", code), &gotgbot.SendMessageOpts{ParseMode: "Markdown"})
 	keyboard := [][]gotgbot.InlineKeyboardButton{{
 		gotgbot.InlineKeyboardButton{
 			Text: "Панель Управления",
 			Url: fmt.Sprintf("https://t.me/%s/panel?startapp=%d", b.User.Username, ctx.EffectiveChat.Id),
 		},
 	}}
-	_, err = ctx.EffectiveMessage.Reply(
+	_, err := ctx.EffectiveMessage.Reply(
 		b,
 		"Нажмите на кнопку ниже, чтобы открыть Панель Управления:",
 		&gotgbot.SendMessageOpts{
