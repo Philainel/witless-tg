@@ -29,6 +29,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	database "code.philainel.pw/philainel/witless-tg/db"
+	core "code.philainel.pw/philainel/witless-tg/core"
 )
 
 var (
@@ -554,37 +555,32 @@ func handle_send(b *gotgbot.Bot, ctx *ext.Context, text string, reply bool) erro
 
 }
 
-type tokenpair struct {
-	Current int64
-	Next int64
-}
-
 func learn(id int64, text string) error {
 	parts := strings.Split(text, " ")
 	tokens, err := GetTokensByWords(parts)
 	if err != nil {
 		return err
 	}
-	pairs := make([]*tokenpair, 0, len(parts) + 1)
-	pairs = append(pairs, &tokenpair{Current: 1, Next: tokens[0]})
+	pairs := make([]*core.TokenPair, 0, len(parts) + 1)
+	pairs = append(pairs, &core.TokenPair{Current: 1, Next: tokens[0]})
 	for i := 0; i < len(tokens) - 1; i++ {
-		pairs = append(pairs, &tokenpair{Current: tokens[i], Next: tokens[i+1]})
+		pairs = append(pairs, &core.TokenPair{Current: tokens[i], Next: tokens[i+1]})
 	}
-	pairs = append(pairs, &tokenpair{Current: tokens[len(tokens)-1], Next: 2})
-	SaveLinksFromTokenPairs(pairs, id);
+	pairs = append(pairs, &core.TokenPair{Current: tokens[len(tokens)-1], Next: 2})
+	database.SaveLinksFromTokenPairs(db, pairs, id);
 	return nil
 }
 
 func learn_sticker(id int64, sticker string) error {
-	pairs := make([]*tokenpair, 2)
+	pairs := make([]*core.TokenPair, 2)
 	tokens, err := GetTokensByWords([]string{sticker_start_mark + sticker + sticker_end_mark})
 	log.Println(tokens)
 	if err != nil {
 		return err
 	}
-	pairs[0] = &tokenpair{Current: 1, Next: tokens[0]}
-	pairs[1] = &tokenpair{Current: tokens[0], Next: 2}
-	SaveLinksFromTokenPairs(pairs, id)
+	pairs[0] = &core.TokenPair{Current: 1, Next: tokens[0]}
+	pairs[1] = &core.TokenPair{Current: tokens[0], Next: 2}
+	database.SaveLinksFromTokenPairs(db, pairs, id)
 	return nil
 }
 
@@ -608,21 +604,6 @@ func GetTokensByWords(words []string) ([]int64, error) {
 		result = append(result, id);
 	}
 	return result, nil
-}
-
-func SaveLinksFromTokenPairs(pairs []*tokenpair, id int64) {
-	query := `
-		INSERT INTO links (token, chat, next, count)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (token, chat, next) DO UPDATE SET count = links.count + 1;
-	`
-	for _, p := range pairs {
-		_, err := db.Exec(query, p.Current, id, p.Next, 1);
-		if err != nil {
-			log.Printf("linking error: %s", err.Error())
-			continue
-		}
-	}
 }
 
 type next_count struct {
