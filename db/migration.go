@@ -9,7 +9,6 @@ import (
 	"strings"
 	"strconv"
 
-	"database/sql"
 	_ "github.com/lib/pq"
 )
 
@@ -17,14 +16,14 @@ var (
 	migrations []*migration
 )
 
-func PerformMigration(db *sql.DB, version int) error {
+func (d *DB) PerformMigration(version int) error {
 	query := `CREATE TABLE IF NOT EXISTS __witless_schema_migration (
 		id SERIAL PRIMARY KEY,
 		version INT,
 		updated_at TIMESTAMPTZ
 	)`
 
-	if _, err := db.Exec(query); err != nil {
+	if _, err := d.db.Exec(query); err != nil {
 		return fmt.Errorf("failed to create __witless_schema_migration table: %s", err.Error())
 	}
 
@@ -33,13 +32,13 @@ func PerformMigration(db *sql.DB, version int) error {
 		VALUES (1, 0, NOW())
 		ON CONFLICT (id) DO NOTHING
 	`
-	if _, err := db.Exec(query); err != nil {
+	if _, err := d.db.Exec(query); err != nil {
 		return fmt.Errorf("failed to ensure version number stored: %s", err.Error())
 	}
 
 	query = `SELECT version FROM __witless_schema_migration WHERE id = 1`
 	var stored_version int
-	err := db.QueryRow(query).Scan(&stored_version)
+	err := d.db.QueryRow(query).Scan(&stored_version)
 	if err != nil {
 		return err
 	}
@@ -52,14 +51,14 @@ func PerformMigration(db *sql.DB, version int) error {
 		return err
 	}
 	for i := stored_version + 1; i <= version; i++ {
-		if err := executeMigration(db, i); err != nil {
+		if err := d.executeMigration(i); err != nil {
 			log.Fatalf("Failed to apply migration %d: %s", i, err.Error())
 		}
 	}
 	return nil
 }
 
-func executeMigration(db *sql.DB, version int) error {
+func (d *DB) executeMigration(version int) error {
 	log.Printf("Executing migration %d", version)
 	path, err := getMigrationFilePath(version)
 	if err != nil {
@@ -70,7 +69,7 @@ func executeMigration(db *sql.DB, version int) error {
 		return err
 	}
 	query := string(file)
-	tx, err := db.Begin()
+	tx, err := d.db.Begin()
 	if err != nil {
 		return err
 	}
