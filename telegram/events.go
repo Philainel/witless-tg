@@ -2,7 +2,7 @@ package telegram
 
 import (
 	"log"
-	"math/rand"
+	"math/rand/v2"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"

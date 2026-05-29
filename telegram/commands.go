@@ -1,7 +1,7 @@
 package telegram
 
 import (
-	"math/rand"
+	"math/rand/v2"
 	"fmt"
 	"log"
 	"strconv"
@@ -79,7 +79,7 @@ func (tg *TG) wipe_handler(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 	data, ok := tg.wipes.Load(ctx.EffectiveChat.Id)
 	if !ok {
-		code := rand.Intn(10000)
+		code := rand.IntN(10000)
 		tg.wipes.Store(ctx.EffectiveChat.Id, ctx.EffectiveMessage.From.Id ^ int64(code))
 		_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("⚠ ВНИМАНИЕ ⚠\n\nЭта команда навсегда (это очень долго) стирает данные Witless об этом чате!\nПосле удаления данные не подлежат восстановлению.\nДля подтверждения используйте команду `/wipe %04d` ещё раз в течение минуты", code), &gotgbot.SendMessageOpts{ParseMode: "Markdown"})
 		return err
