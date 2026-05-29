@@ -23,10 +23,10 @@ type API struct {
 
 func NewAPI(tg *telegram.TG, db *database.DB, public_key_pem, private_key_pem []byte) *API {
 	public, err := jwt.ParseRSAPublicKeyFromPEM(public_key_pem)
-	if err != nil { log.Fatalf("can't parse public key: %s", err.Error()) }
+	if err != nil { log.Fatalf("failed to parse public key: %s", err.Error()) }
 
 	private, err := jwt.ParseRSAPrivateKeyFromPEM(private_key_pem)
-	if err != nil { log.Fatalf("can't parse private key: %s", err.Error()) }
+	if err != nil { log.Fatalf("failed to parse private key: %s", err.Error()) }
 
 	return &API{ db: db, tg: tg, public_key: public, private_key: private}
 }

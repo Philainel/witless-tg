@@ -21,6 +21,3 @@ func (d *DB) Close() {
 	d.db.Close()
 }
 
-func (db *DB) GetDB() *sql.DB { // TODO: Encapsulate connector
-	return db.db
-}

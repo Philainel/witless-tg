@@ -91,13 +91,8 @@ func (tg *TG) wipe_handler(b *gotgbot.Bot, ctx *ext.Context) error {
 	if ctx.EffectiveMessage.From.Id ^ int64(code) != data {
 		return nil
 	}
-	query := `
-		DELETE FROM links WHERE chat = $1
-	`
-	_, err = tg.db.GetDB().Exec(query, ctx.EffectiveChat.Id) // move away from GetDB
-	if err != nil {
-		return err
-	}
+	err = tg.db.ResetLinksForChat(ctx.EffectiveChat.Id)
+	if err != nil { return err }
 	err = tg.db.ResetToDefaultSettings(ctx.EffectiveChat.Id)
 	if err != nil { return err }
 	_, err = ctx.EffectiveMessage.SetReaction(b, 

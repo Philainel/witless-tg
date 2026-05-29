@@ -39,7 +39,7 @@ func main() {
 	}
 	defer db.Close()
 	err = db.PerformMigration(2)
-	if err != nil { log.Fatalf("cannot perform migration: %s", err.Error()) }
+	if err != nil { log.Fatalf("failed to perform migration: %s", err.Error()) }
 
 	wt := witless.NewWitless(db, redisClient)
 
@@ -47,12 +47,12 @@ func main() {
 	if token == "" { log.Fatal("TG_TOKEN not set") }
 
 	tg, err := telegram.NewTG(token, wt, db)
-	if err != nil { log.Fatalf("can't create bot: %s", err.Error()) }
+	if err != nil { log.Fatalf("failed to create bot: %s", err.Error()) }
 	tg.RegisterHandlers()
 
-	server := api.NewAPI(tg, db, publicPem, privatePem);
-	server.BakeTgVerifyString(token);
-	go server.ListenAndServe();
+	server := api.NewAPI(tg, db, publicPem, privatePem)
+	server.BakeTgVerifyString(token)
+	go server.ListenAndServe()
 
 	err = tg.EventLoop()
 	if err != nil {

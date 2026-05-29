@@ -1,6 +1,11 @@
 package db
 
-import "database/sql"
+import (
+	"database/sql"
+
+
+	"github.com/lib/pq"
+)
 
 func (db *DB) GetTokensByWords(words []string) ([]int64, error) {
 	query := `
@@ -22,5 +27,28 @@ func (db *DB) GetTokensByWords(words []string) ([]int64, error) {
 		result = append(result, id);
 	}
 	return result, nil
+}
+
+func (db *DB) TranslateTokensToWords(tokens []int64) ([]string, error) {
+	query := `
+		SELECT word
+		FROM token
+		WHERE id = ANY($1)
+		ORDER BY array_position($1, id)
+	`
+	rows, err := db.db.Query(query, pq.Array(tokens))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	words := make([]string, 0, len(tokens));
+	for rows.Next() {
+		var word string
+		if err := rows.Scan(&word); err != nil {
+			return nil, err
+		}
+		words = append(words, word)
+	}
+	return words, nil
 }
 

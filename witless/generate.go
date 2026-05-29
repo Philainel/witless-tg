@@ -1,47 +1,38 @@
 package witless
 
 import (
-	"math/rand"
+	"fmt"
+	"math/rand/v2"
 	"strings"
-
-	"code.philainel.pw/philainel/witless-tg/core"
-	"github.com/lib/pq"
 )
 
 func (wt *Witless) Generate(id int64) (string, error) {
-	query := `
-		SELECT next, count FROM links WHERE token = $1 AND chat = $2
-	`
 	var current int64 = 1
 	tokens := make([]int64, 0, 10)
 	for {
-		rows, err := wt.db.GetDB().Query(query, current, id)
+		links, err := wt.db.ReadNextAvailableTokens(id, current)
 		if err != nil {
 			return "", err
 		}
-		defer rows.Close()
-		nexts := make([]*core.NextCountPair, 0, 10)
-		for rows.Next() {
-			next := &core.NextCountPair{}
-			err := rows.Scan(&next.Next, &next.Count)
-			if err != nil {
-				return "", err
+		defer links.Close()
+		var (
+			next int64
+			found bool
+			total int64 = 0
+		)
+		for links.Next() {
+			if links.Err() != nil {
+				return "", links.Err()
 			}
-			nexts = append(nexts, next)
-		}
-		total := 0;
-		for i := range nexts {
-			total += nexts[i].Count
-		}
-		random := rand.Intn(total)
-		sum := 0
-		var next int64 = 0
-		for i := range nexts {
-			sum += nexts[i].Count
-			if random <= sum {
-				next = nexts[i].Next
-				break
+			candidate := links.NextCountPair()
+			total += int64(candidate.Count)
+			if rand.Int64N(total) < int64(links.NextCountPair().Count) {
+				next = candidate.Next
+				found = true
 			}
+		}
+		if !found {
+			return "", fmt.Errorf("somehow failed to find next pair")
 		}
 		if next == 2 {
 			break
@@ -49,26 +40,9 @@ func (wt *Witless) Generate(id int64) (string, error) {
 		tokens = append(tokens, next)
 		current = next
 	}
-	query = `
-		SELECT id, word FROM token WHERE id = ANY($1)
-	`
-	rows, err := wt.db.GetDB().Query(query, pq.Array(tokens))
+	words, err := wt.db.TranslateTokensToWords(tokens)
 	if err != nil {
 		return "", err
-	}
-	defer rows.Close()
-	tokenToWord := make(map[int64]string)
-	for rows.Next() {
-		var id int64
-		var word string
-		if err := rows.Scan(&id, &word); err != nil {
-			return "", err
-		}
-		tokenToWord[id]=word
-	}
-	words := make([]string, len(tokens));
-	for i := range tokens {
-		words[i] = tokenToWord[tokens[i]]
 	}
 	return strings.Join(words, " "), nil
 }

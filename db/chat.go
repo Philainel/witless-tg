@@ -13,7 +13,7 @@ func (db *DB) GetChatById(chat int64) (int16, string, error) {
 	if err == sql.ErrNoRows {
 		err = db.InitDefaultSettings(chat);
 		if err != nil {
-			return 0, "", fmt.Errorf("can't initialize default settings: %s", err.Error())
+			return 0, "", fmt.Errorf("failed to initialize default settings: %s", err.Error())
 		}
 		return db.GetChatById(chat)
 	}
@@ -25,7 +25,7 @@ func (db *DB) GetChatById(chat int64) (int16, string, error) {
 
 func (db *DB) ApplyChatSettingsById(chat int64, rate int16, mode string) error {
 	if mode != "on" && mode != "learning" && mode != "messaging" && mode != "off" {
-		return fmt.Errorf("cannot apply working mode: %s does not allowed", mode)
+		return fmt.Errorf("failed to apply working mode: %s does not allowed", mode)
 	}
 	err := db.InitDefaultSettings(chat)
 	if err != nil { return err; }
