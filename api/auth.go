@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"sort"
@@ -40,8 +41,14 @@ func (api *API) authHandler(w http.ResponseWriter, r *http.Request) {
 
 	h := hmac.New(sha256.New, api.tg_verify_string)
 	h.Write([]byte(dataCheckString))
-	expectedHash := hex.EncodeToString(h.Sum(nil))  // TODO: decode hash instead of this mess
-	if !hmac.Equal([]byte(expectedHash), []byte(hash)){
+	expectedHash := h.Sum(nil)
+	providedHash, err := hex.DecodeString(hash)
+	if err != nil {
+		log.Println("failed to decode hash string: %s", err.Error())
+		http.Error(w, "{}", http.StatusInternalServerError)
+		return
+	}
+	if !hmac.Equal(expectedHash, providedHash) {
 		http.Error(w, "invalid hash", http.StatusUnauthorized)
 		return
 	}

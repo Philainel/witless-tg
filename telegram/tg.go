@@ -28,10 +28,6 @@ func NewTG(token string, wt *witless.Witless, db *database.DB) (*TG, error) {
 	return &TG{bot: b, wt: wt, db: db}, err
 }
 
-func (tg *TG) GetBot() *gotgbot.Bot { // TODO: Encapsulate bot
-	return tg.bot
-}
-
 func (tg *TG) RegisterHandlers() {
 	dispatcher := ext.NewDispatcher(&ext.DispatcherOpts{
 		Error: func(b *gotgbot.Bot, ctx *ext.Context, err error) ext.DispatcherAction {
@@ -89,3 +85,10 @@ func (tg *TG) handle_send(b *gotgbot.Bot, ctx *ext.Context, text string, reply b
 
 }
 
+func (tg *TG) GetChatById(id int64) (*gotgbot.ChatFullInfo, error) {
+	return tg.bot.GetChat(id, &gotgbot.GetChatOpts{})
+}
+
+func (tg *TG) GetChatAdmins(chat *gotgbot.ChatFullInfo) ([]gotgbot.ChatMember, error){
+	return chat.ToChat().GetAdministrators(tg.bot, nil)
+}

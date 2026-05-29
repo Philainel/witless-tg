@@ -6,8 +6,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-
-	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
 
@@ -34,12 +32,12 @@ func (api *API) getChatHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	tgChat, err := api.tg.GetBot().GetChat(chatId, &gotgbot.GetChatOpts{})
+	tgChat, err := api.tg.GetChatById(chatId)
 	if err != nil {
 		log.Printf("error fetching chat from Telegram: %s", err.Error())
 		http.Error(w, "{}", http.StatusInternalServerError)
 	}
-	admins, err := tgChat.ToChat().GetAdministrators(api.tg.GetBot(), nil)
+	admins, err := api.tg.GetChatAdmins(tgChat)
 	editable := false
 	if err != nil {
 		http.Error(w, "{}", http.StatusInternalServerError)
