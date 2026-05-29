@@ -80,9 +80,11 @@ func (tg *TG) handle_send(b *gotgbot.Bot, ctx *ext.Context, text string, reply b
 		_, err := ctx.EffectiveMessage.Reply(b, text, nil)
 		return err
 	}
-	_, err := ctx.EffectiveChat.SendMessage(b, text, nil)
-	return err
 
+	_, err := ctx.EffectiveChat.SendMessage(b, text, &gotgbot.SendMessageOpts{
+		MessageThreadId: ctx.EffectiveMessage.MessageThreadId,
+	})
+	return err
 }
 
 func (tg *TG) GetChatById(id int64) (*gotgbot.ChatFullInfo, error) {
