@@ -38,7 +38,7 @@ func (db *DB) ReadNextAvailableTokens(id int64, current int64) (*LinkIterator, e
 }
 
 func (lit *LinkIterator) Close() {
-	lit.Close()
+	lit.rows.Close()
 }
 
 func (lit *LinkIterator) Err() error {
